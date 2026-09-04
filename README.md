@@ -1,8 +1,14 @@
 # kitten-watch
 
-Checks Dyrenes Beskyttelse Aarhus roughly every 15 minutes for a cat whose name
-resembles **Robina** or **Ally**, and pushes to [ntfy.sh](https://ntfy.sh) on a
-new match.
+Checks Dyrenes Beskyttelse Aarhus roughly every 15 minutes and pushes to
+[ntfy.sh](https://ntfy.sh):
+
+- **urgent** when a name resembles **Robina** or **Ally** (difflib, 0.75)
+- **normal** when any animal appears that was not on the list last time
+
+The second matters: matching on the name alone is fragile, because the shelter
+may list the cat under a different name and then a name-only watcher stays
+silent forever.
 
 - `check_kittens.py` — scrape, fuzzy match (`difflib`, threshold 0.75), notify.
 - `.github/workflows/check-kittens.yml` — cron + manual trigger.

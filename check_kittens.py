@@ -1,8 +1,16 @@
 #!/usr/bin/env python3
-"""Watch Dyrenes Beskyttelse Aarhus for cats whose name resembles Robina or Ally.
+"""Watch Dyrenes Beskyttelse Aarhus and report what is new.
 
-Verified against the live page on 2026-09-04: it is server-rendered, so plain
-requests + BeautifulSoup is enough, no browser needed.
+Two kinds of alert:
+  * urgent - a name resembling one we are hunting for (Robina / Ally)
+  * normal - any animal that was not on the list last time
+
+The second exists because matching only on the name is fragile: the shelter may
+list the cat under a different name entirely, and then a name-only watcher stays
+silent forever. New-arrival alerts are low volume - the list holds ~15 animals
+and turns over slowly - so they cost little and close that hole.
+
+Verified against the live page 2026-09-04: server-rendered, no JS needed.
 """
 import json
 import os
@@ -60,10 +68,8 @@ def fetch_listings() -> dict:
         if not LINK_RE.search(href):
             continue
         name = clean_name(anchor.get_text(" ", strip=True))
-        if not name:
-            continue
-        url = BASE + href if href.startswith("/") else href
-        listings.setdefault(url, name)
+        if name:
+            listings.setdefault(BASE + href if href.startswith("/") else href, name)
     return listings
 
 
@@ -92,25 +98,18 @@ def save_seen(seen: set) -> None:
     )
 
 
-def notify(name: str, want: str, ratio: float, url: str) -> None:
-    """Push to ntfy. Headers stay ASCII - ntfy sends them as latin-1."""
+def push(title: str, body: str, click: str, priority: str = "default", tags: str = "cat") -> None:
+    """Send one ntfy notification. Headers stay ASCII - ntfy sends them latin-1."""
     if not NTFY_TOPIC:
-        print("  NTFY_TOPIC is not set - skipping notification", file=sys.stderr)
+        print(f"  NTFY_TOPIC not set - would have sent: {title} / {body}", file=sys.stderr)
         return
-    body = f"{name} ligner {want} ({ratio:.0%})\n{url}"
     resp = requests.post(
         f"https://ntfy.sh/{NTFY_TOPIC}",
         data=body.encode("utf-8"),
-        headers={
-            "Title": "Muligt match paa internatet",
-            "Priority": "urgent",
-            "Tags": "cat",
-            "Click": url,
-        },
+        headers={"Title": title, "Priority": priority, "Tags": tags, "Click": click},
         timeout=30,
     )
     resp.raise_for_status()
-    print(f"  notified: {name}")
 
 
 def main() -> int:
@@ -121,26 +120,52 @@ def main() -> int:
         return 1
 
     if not listings:
-        # Better to fail loudly than to sit silent for weeks because the markup
+        # Fail loudly rather than sitting silent for weeks because the markup
         # changed and the watcher quietly matches nothing.
         print("no listings found - the page markup may have changed", file=sys.stderr)
         return 1
 
     seen = load_seen()
-    print(f"{len(listings)} dyr fundet")
-    new = 0
+    first_run = not seen
+    print(f"{len(listings)} dyr fundet" + ("  (foerste koersel)" if first_run else ""))
+
+    matches, arrivals = [], []
     for url, name in sorted(listings.items(), key=lambda kv: kv[1].lower()):
         ratio, want = best_match(name)
+        is_new = name.lower() not in seen
         hit = ratio >= THRESHOLD
-        flag = f"  <-- MATCH {want}" if hit else ""
-        print(f"  {name:<26} {ratio:.2f}{flag}")
-        if hit and name.lower() not in seen:
-            notify(name, want, ratio, url)
-            seen.add(name.lower())
-            new += 1
 
+        mark = f"  <-- MATCH {want}" if hit else ("  <-- ny" if is_new else "")
+        print(f"  {name:<26} {ratio:.2f}{mark}")
+
+        if hit and is_new:
+            matches.append((name, want, ratio, url))
+        elif is_new:
+            arrivals.append((name, url))
+
+    if first_run:
+        # Do not fire 15 pushes the first time - just say the watch is running.
+        push(
+            "kitten-watch koerer",
+            f"Overvaager {len(listings)} dyr hos Dyrenes Beskyttelse Aarhus.\n"
+            f"Du faar besked ved hvert nyt dyr, og en hoejlydt alarm hvis et navn "
+            f"ligner {' eller '.join(WANTED)}.",
+            URL,
+            tags="eyes",
+        )
+        print("  (foerste koersel - sendte kun en opsummering)")
+    else:
+        for name, want, ratio, url in matches:
+            push(f"MATCH: {name}", f"{name} ligner {want} ({ratio:.0%})\n{url}",
+                 url, priority="urgent", tags="rotating_light")
+            print(f"  alarm sendt: {name}")
+        for name, url in arrivals:
+            push("Nyt dyr paa internatet", f"{name}\n{url}", url)
+            print(f"  besked sendt: {name}")
+
+    seen.update(n.lower() for n in listings.values())
     save_seen(seen)
-    print(f"{new} ny(e) notifikation(er)")
+    print(f"{len(matches)} match, {len(arrivals)} nye dyr")
     return 0
 
 
