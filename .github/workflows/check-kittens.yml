@@ -1,0 +1,50 @@
+name: check-kittens
+
+on:
+  schedule:
+    # GitHub queues cron on a best-effort basis and routinely runs short
+    # intervals late, so treat this as "roughly every 15 minutes".
+    - cron: "*/15 * * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: check-kittens
+  cancel-in-progress: false
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: pip install --quiet requests beautifulsoup4
+
+      # seen_names.json is state, not source, so it lives in the Actions cache
+      # rather than the repo. Cache entries are immutable, hence a fresh key
+      # every run plus a prefix restore-key that picks up the newest one.
+      - name: Restore seen names
+        uses: actions/cache/restore@v4
+        with:
+          path: seen_names.json
+          key: seen-names-${{ github.run_id }}
+          restore-keys: seen-names-
+
+      - name: Check for matches
+        env:
+          NTFY_TOPIC: ${{ secrets.NTFY_TOPIC }}
+        run: python check_kittens.py
+
+      - name: Save seen names
+        if: always()
+        uses: actions/cache/save@v4
+        with:
+          path: seen_names.json
+          key: seen-names-${{ github.run_id }}
