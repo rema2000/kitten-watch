@@ -13,7 +13,7 @@ silent forever.
 - `check_kittens.py` — scrape, fuzzy match (`difflib`, threshold 0.75), notify.
 - `.github/workflows/check-kittens.yml` — cron + manual trigger.
 
-`seen_names.json` holds names already notified about, so a standing match does
+`seen_ids.json` holds names already notified about, so a standing match does
 not re-alert. It lives in the Actions cache rather than the repo.
 
 ## Setup

@@ -29,7 +29,7 @@ LINK_RE = re.compile(r"/adopter/dyrenes-beskyttelse-aarhus/d-\d+$")
 
 WANTED = ["Robina", "Ally"]
 THRESHOLD = 0.75
-SEEN_FILE = Path("seen_names.json")
+SEEN_FILE = Path("seen_ids.json")
 NTFY_TOPIC = os.environ.get("NTFY_TOPIC", "").strip()
 UA = "kitten-watch/1.0 (personal adoption alert)"
 
@@ -83,18 +83,27 @@ def best_match(name: str):
     return best_ratio, best_name
 
 
-def load_seen() -> set:
+def load_seen() -> dict:
+    """Keyed on the listing URL, which carries a unique id per animal.
+
+    Keying on the NAME was wrong: cat names repeat constantly - a second Luna
+    would have been silently swallowed because the first one was on the list.
+    An older format (a flat list of names) is treated as empty, which re-baselines
+    once and costs one summary notification.
+    """
     if SEEN_FILE.exists():
         try:
-            return set(json.loads(SEEN_FILE.read_text(encoding="utf-8")))
+            data = json.loads(SEEN_FILE.read_text(encoding="utf-8"))
+            if isinstance(data, dict):
+                return data
         except (ValueError, OSError) as exc:
             print(f"  could not read {SEEN_FILE} ({exc}) - starting fresh", file=sys.stderr)
-    return set()
+    return {}
 
 
-def save_seen(seen: set) -> None:
+def save_seen(seen: dict) -> None:
     SEEN_FILE.write_text(
-        json.dumps(sorted(seen), ensure_ascii=False, indent=2), encoding="utf-8"
+        json.dumps(seen, ensure_ascii=False, indent=2, sort_keys=True), encoding="utf-8"
     )
 
 
@@ -132,7 +141,7 @@ def main() -> int:
     matches, arrivals = [], []
     for url, name in sorted(listings.items(), key=lambda kv: kv[1].lower()):
         ratio, want = best_match(name)
-        is_new = name.lower() not in seen
+        is_new = url not in seen
         hit = ratio >= THRESHOLD
 
         mark = f"  <-- MATCH {want}" if hit else ("  <-- ny" if is_new else "")
@@ -163,7 +172,7 @@ def main() -> int:
             push("Nyt dyr paa internatet", f"{name}\n{url}", url)
             print(f"  besked sendt: {name}")
 
-    seen.update(n.lower() for n in listings.values())
+    seen.update(listings)
     save_seen(seen)
     print(f"{len(matches)} match, {len(arrivals)} nye dyr")
     return 0
